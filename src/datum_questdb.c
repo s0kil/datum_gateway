@@ -56,11 +56,18 @@ typedef struct {
     bool running;
     bool is_healthy;
     
+    // Connection resilience
+    uint32_t reconnect_attempts;
+    uint64_t last_reconnect_attempt_ms;
+    uint32_t consecutive_failures;
+    
     // Statistics
     uint64_t metrics_sent;
     uint64_t metrics_failed;
     uint64_t metrics_pending;
     uint64_t last_flush_time_ms;
+    uint64_t buffer_flushes;
+    uint64_t last_successful_flush_ms;
 } T_DATUM_QUESTDB_STATE;
 
 static T_DATUM_QUESTDB_STATE *g_questdb_state = NULL;
@@ -99,6 +106,7 @@ static void *datum_questdb_flush_thread(void *arg);
 static bool datum_questdb_flush_buffer(void);
 static bool validate_config(const T_DATUM_QUESTDB_CONFIG *config);
 static void handle_questdb_error(line_sender_error *err, const char *operation);
+static bool reconnect_questdb(void);
 
 bool datum_questdb_init(const T_DATUM_QUESTDB_CONFIG *config) {
     if (!config) {
@@ -211,8 +219,16 @@ static bool validate_config(const T_DATUM_QUESTDB_CONFIG *config) {
         return false;
     }
     
-    if (config->flush_interval_ms < 100 || config->flush_interval_ms > 60000) {
-        DLOG_WARN("Flush interval %u outside recommended range 100-60000ms", config->flush_interval_ms);
+    // Validate batch size
+    if (config->batch_size < 10 || config->batch_size > 10000) {
+        DLOG_ERROR("Invalid batch_size: %u (must be 10-10000)", config->batch_size);
+        return false;
+    }
+    
+    // Validate flush interval
+    if (config->flush_interval_ms < 1000 || config->flush_interval_ms > 60000) {
+        DLOG_ERROR("Invalid flush_interval_ms: %u (must be 1000-60000)", config->flush_interval_ms);
+        return false;
     }
     
     return true;
@@ -228,6 +244,12 @@ static void handle_questdb_error(line_sender_error *err, const char *operation) 
         if (g_questdb_state) {
             g_questdb_state->is_healthy = false;
             g_questdb_state->metrics_failed++;
+            g_questdb_state->consecutive_failures++;
+            
+            // Trigger reconnection after multiple failures
+            if (g_questdb_state->consecutive_failures >= 3) {
+                DLOG_WARN("Multiple QuestDB failures detected, will attempt reconnection");
+            }
         }
     }
 }
@@ -391,18 +413,35 @@ static bool datum_questdb_flush_buffer(void) {
         return true;
     }
     
+    // Attempt reconnection if unhealthy and multiple failures
+    if (!g_questdb_state->is_healthy && g_questdb_state->consecutive_failures >= 3) {
+        if (reconnect_questdb()) {
+            DLOG_INFO("QuestDB reconnection successful, retrying flush");
+        } else {
+            return false;
+        }
+    }
+    
     line_sender_error *err = NULL;
     
     if (!line_sender_flush(g_questdb_state->sender, g_questdb_state->buffer, &err)) {
         handle_questdb_error(err, "flushing buffer");
+        
+        // Try reconnection on flush failure
+        if (g_questdb_state->consecutive_failures >= 3) {
+            reconnect_questdb();
+        }
         return false;
     }
     
-    // Update statistics
+    // Update statistics on success
     g_questdb_state->metrics_sent += g_questdb_state->metrics_pending;
     g_questdb_state->metrics_pending = 0;
     g_questdb_state->last_flush_time_ms = current_time_millis();
+    g_questdb_state->last_successful_flush_ms = g_questdb_state->last_flush_time_ms;
+    g_questdb_state->buffer_flushes++;
     g_questdb_state->is_healthy = true;
+    g_questdb_state->consecutive_failures = 0;
     
     return true;
 }
@@ -505,6 +544,74 @@ bool datum_questdb_is_healthy(void) {
     }
     
     return g_questdb_state->is_healthy;
+}
+
+static bool reconnect_questdb(void) {
+    if (!g_questdb_state) {
+        return false;
+    }
+    
+    uint64_t current_ms = current_time_millis();
+    
+    // Implement exponential backoff
+    uint64_t min_wait_ms = (1 << g_questdb_state->reconnect_attempts) * 1000; // 1s, 2s, 4s, 8s...
+    if (min_wait_ms > 60000) min_wait_ms = 60000; // Cap at 60 seconds
+    
+    // Check if enough time has passed since last attempt
+    if (current_ms - g_questdb_state->last_reconnect_attempt_ms < min_wait_ms) {
+        return false; // Too soon to retry
+    }
+    
+    g_questdb_state->last_reconnect_attempt_ms = current_ms;
+    g_questdb_state->reconnect_attempts++;
+    
+    DLOG_INFO("Attempting QuestDB reconnection (attempt %u)", g_questdb_state->reconnect_attempts);
+    
+    // Close existing connection
+    if (g_questdb_state->sender) {
+        line_sender_close(g_questdb_state->sender);
+        g_questdb_state->sender = NULL;
+    }
+    
+    // Clear existing buffer
+    if (g_questdb_state->buffer) {
+        line_sender_buffer_free(g_questdb_state->buffer);
+        g_questdb_state->buffer = NULL;
+    }
+    
+    // Recreate connection
+    char conn_str[512];
+    snprintf(conn_str, sizeof(conn_str), "tcp::addr=%s:%u;", 
+             g_questdb_state->config.host, g_questdb_state->config.ilp_port);
+    
+    line_sender_error *err = NULL;
+    line_sender_utf8 conf_utf8 = {.len = strlen(conn_str), .buf = conn_str};
+    g_questdb_state->sender = line_sender_from_conf(conf_utf8, &err);
+    
+    if (!g_questdb_state->sender) {
+        DLOG_ERROR("QuestDB reconnection failed: %s:%u", 
+                   g_questdb_state->config.host, g_questdb_state->config.ilp_port);
+        handle_questdb_error(err, "reconnection");
+        return false;
+    }
+    
+    // Recreate buffer
+    g_questdb_state->buffer = line_sender_buffer_with_max_name_len(128);
+    if (!g_questdb_state->buffer) {
+        DLOG_ERROR("Failed to recreate QuestDB buffer during reconnection");
+        line_sender_close(g_questdb_state->sender);
+        g_questdb_state->sender = NULL;
+        return false;
+    }
+    
+    // Reset state
+    g_questdb_state->is_healthy = true;
+    g_questdb_state->consecutive_failures = 0;
+    g_questdb_state->reconnect_attempts = 0;
+    g_questdb_state->metrics_pending = 0;
+    
+    DLOG_INFO("QuestDB reconnection successful");
+    return true;
 }
 
 

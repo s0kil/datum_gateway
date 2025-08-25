@@ -51,6 +51,8 @@
 #define WORKER_INACTIVE_TIMEOUT_MS (3600 * 1000)  // 1 hour inactive timeout
 #define CLEANUP_INTERVAL_SEC 300    // Cleanup inactive workers every 5 minutes
 #define STAT_CYCLE_MS 60000  // 60 second cycle for buffer swapping, same as dashboard
+#define MAX_WORKERS 10000  // Maximum workers to track (configurable via config file)
+#define AGGRESSIVE_CLEANUP_TIMEOUT_MS (300 * 1000)  // 5 minutes for aggressive cleanup
 
 typedef struct worker_stats {
     char worker_id[128];
@@ -110,6 +112,23 @@ bool datum_metrics_collector_init(void) {
         return false;
     }
 
+    // Validate configuration
+    if (datum_config.metrics_collector.collection_interval_sec < 10 || 
+        datum_config.metrics_collector.collection_interval_sec > 300) {
+        DLOG_ERROR("Invalid collection_interval_sec: %u (must be 10-300)",
+                   datum_config.metrics_collector.collection_interval_sec);
+        pthread_mutex_unlock(&g_init_mutex);
+        return false;
+    }
+    
+    if (datum_config.metrics_collector.hashrate_window_sec < 60 || 
+        datum_config.metrics_collector.hashrate_window_sec > 3600) {
+        DLOG_ERROR("Invalid hashrate_window_sec: %u (must be 60-3600)",
+                   datum_config.metrics_collector.hashrate_window_sec);
+        pthread_mutex_unlock(&g_init_mutex);
+        return false;
+    }
+    
     g_collector = calloc(1, sizeof(T_METRICS_COLLECTOR_STATE));
     if (!g_collector) {
         DLOG_ERROR("Failed to allocate metrics collector state");
@@ -231,6 +250,51 @@ static T_WORKER_STATS *find_or_create_worker(const char *worker_id, const char *
         worker = worker->next;
     }
 
+    // Check if we've reached the worker limit
+    if (g_collector->worker_count >= MAX_WORKERS) {
+        DLOG_WARN("Worker limit reached (%u workers), performing aggressive cleanup", MAX_WORKERS);
+        
+        // Try aggressive cleanup first
+        cleanup_inactive_workers(AGGRESSIVE_CLEANUP_TIMEOUT_MS);
+        
+        if (g_collector->worker_count >= MAX_WORKERS) {
+            // Still at limit, remove oldest inactive worker
+            T_WORKER_STATS *oldest = NULL;
+            T_WORKER_STATS *oldest_prev = NULL;
+            T_WORKER_STATS *curr = g_collector->workers;
+            T_WORKER_STATS *prev = NULL;
+            uint64_t oldest_time = UINT64_MAX;
+            
+            while (curr) {
+                if (curr->last_share_time_ms < oldest_time) {
+                    oldest_time = curr->last_share_time_ms;
+                    oldest = curr;
+                    oldest_prev = prev;
+                }
+                prev = curr;
+                curr = curr->next;
+            }
+            
+            if (oldest) {
+                DLOG_WARN("Removing oldest worker to make room: %s (last seen: %llu ms ago)",
+                          oldest->worker_id, 
+                          (unsigned long long)(current_time_millis() - oldest->last_share_time_ms));
+                
+                if (oldest_prev) {
+                    oldest_prev->next = oldest->next;
+                } else {
+                    g_collector->workers = oldest->next;
+                }
+                
+                free_worker_stats(oldest);
+                g_collector->worker_count--;
+            } else {
+                DLOG_ERROR("Cannot create new worker - at limit and unable to free space");
+                return NULL;
+            }
+        }
+    }
+    
     // Create new worker
     worker = calloc(1, sizeof(T_WORKER_STATS));
     if (!worker) {
