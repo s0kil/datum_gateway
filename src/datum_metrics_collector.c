@@ -50,6 +50,7 @@
 
 #define WORKER_INACTIVE_TIMEOUT_MS (3600 * 1000)  // 1 hour inactive timeout
 #define CLEANUP_INTERVAL_SEC 300    // Cleanup inactive workers every 5 minutes
+#define STAT_CYCLE_MS 60000  // 60 second cycle for buffer swapping, same as dashboard
 
 typedef struct worker_stats {
     char worker_id[128];
@@ -62,6 +63,12 @@ typedef struct worker_stats {
     double reported_hashrate_th;
     double calculated_hashrate_th;
     uint64_t first_seen_ms;
+
+    // Dual-buffer stats for accurate hashrate calculation
+    uint8_t active_index;  // 0 or 1, indicates which buffer is active
+    uint64_t diff_accepted_buffer[2];  // Two buffers for difficulty accepted
+    uint64_t last_swap_tsms;  // Timestamp of last buffer swap
+    uint64_t last_swap_ms;    // Elapsed time for the last completed buffer
 
     // Stratum client data
     uint64_t current_diff;
@@ -161,15 +168,35 @@ void datum_metrics_on_share_submit(
 
     T_WORKER_STATS *worker = find_or_create_worker(worker_id, machine_ip);
     if (worker) {
+        uint64_t current_ms = current_time_millis();
+        
         if (accepted) {
             worker->shares_accepted++;
             worker->difficulty_accepted += difficulty;
+            
+            // Add to the active buffer (using inverted index like dashboard)
+            worker->diff_accepted_buffer[worker->active_index ? 1 : 0] += difficulty;
         } else {
             worker->shares_rejected++;
             worker->difficulty_rejected += difficulty;
         }
 
-        worker->last_share_time_ms = current_time_millis();
+        worker->last_share_time_ms = current_ms;
+        
+        // Check if it's time to swap buffers (60 second cycle)
+        if (current_ms >= (worker->last_swap_tsms + STAT_CYCLE_MS)) {
+            worker->last_swap_ms = current_ms - worker->last_swap_tsms;
+            worker->last_swap_tsms = current_ms;
+            
+            // Swap buffers and clear the new active one
+            if (worker->active_index) {
+                worker->active_index = 0;
+                worker->diff_accepted_buffer[0] = 0;
+            } else {
+                worker->active_index = 1;
+                worker->diff_accepted_buffer[1] = 0;
+            }
+        }
 
         // Update stratum client data
         worker->current_diff = current_diff;
@@ -221,6 +248,13 @@ static T_WORKER_STATS *find_or_create_worker(const char *worker_id, const char *
 
     worker->first_seen_ms = current_time_millis();
     worker->last_share_time_ms = worker->first_seen_ms;
+    
+    // Initialize dual-buffer stats
+    worker->active_index = 0;
+    worker->diff_accepted_buffer[0] = 0;
+    worker->diff_accepted_buffer[1] = 0;
+    worker->last_swap_tsms = worker->first_seen_ms;
+    worker->last_swap_ms = 0;
 
     // Add to list
     worker->next = g_collector->workers;
@@ -391,19 +425,24 @@ void datum_metrics_collect_metrics(void) {
 
 static void calculate_hashrates(void) {
     uint64_t current_time_ms = current_time_millis();
-    uint64_t window_start_ms = current_time_ms - (datum_config.metrics_collector.hashrate_window_sec * 1000);
-
+    
     T_WORKER_STATS *worker = g_collector->workers;
     while (worker) {
-        // Only calculate if we have recent shares
-        if (worker->last_share_time_ms > window_start_ms && worker->difficulty_accepted > 0) {
-            // Calculate time window in seconds
-            double time_window_sec = (double)(current_time_ms - window_start_ms) / 1000.0;
-
-            // Calculate hashrate: (difficulty * 2^32) / time_in_seconds / 10^12 = TH/s
-            // Using the same formula as datum_api.c line 1533
-            worker->calculated_hashrate_th =
-                ((double)worker->difficulty_accepted / time_window_sec) * 0.004294967296;
+        // Use dual-buffer approach like dashboard
+        // astat is the inverted index (the completed buffer we read from)
+        uint8_t astat = worker->active_index ? 0 : 1;
+        double hr = 0.0;
+        
+        // Calculate hashrate if we have data in the completed buffer
+        if ((worker->last_swap_ms > 0) && (worker->diff_accepted_buffer[astat] > 0)) {
+            // Use actual elapsed time for the completed buffer
+            hr = ((double)worker->diff_accepted_buffer[astat] / 
+                  (double)(worker->last_swap_ms / 1000.0)) * 0.004294967296;
+        }
+        
+        // Only include if worker was active recently (within 180 seconds like dashboard)
+        if (((double)(current_time_ms - worker->last_swap_tsms) / 1000.0) < 180.0) {
+            worker->calculated_hashrate_th = hr;
         } else {
             worker->calculated_hashrate_th = 0.0;
         }
