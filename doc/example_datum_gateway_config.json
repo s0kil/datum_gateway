@@ -30,5 +30,8 @@
 		"pool_pass_workers": true,
 		"pool_pass_full_users": true,
 		"pooled_mining_only": true
+	},
+	"questdb": {
+		"host": "localhost"
 	}
 }

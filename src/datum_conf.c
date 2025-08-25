@@ -188,6 +188,27 @@ const T_DATUM_CONFIG_ITEM datum_config_options[] = {
 		.required = false, .ptr = &datum_config.datum_pooled_mining_only, 	.default_bool = true },
 	{ .var_type = DATUM_CONF_INT, 		.category = "datum", 		.name = "protocol_global_timeout",		.description = "If no valid messages are received from the DATUM server in this many seconds, give up and try to reconnect",
 		.required = false, .ptr = &datum_config.datum_protocol_global_timeout, 	.default_int = 60 },
+	
+	// QuestDB configuration
+	{ .var_type = DATUM_CONF_BOOL, 		.category = "questdb", 		.name = "enabled",						.description = "Enable QuestDB integration for time series data",
+		.required = false, .ptr = &datum_config.questdb.enabled, 					.default_bool = false },
+	{ .var_type = DATUM_CONF_STRING, 	.category = "questdb", 		.name = "host",							.description = "QuestDB server hostname or IP address",
+		.example = "\"localhost\"",
+		.required = false, .ptr = datum_config.questdb.host, 						.default_string[0] = "localhost", .max_string_len = sizeof(datum_config.questdb.host) },
+	{ .var_type = DATUM_CONF_INT, 		.category = "questdb", 		.name = "ilp_port",						.description = "QuestDB InfluxDB Line Protocol port",
+		.required = false, .ptr = &datum_config.questdb.ilp_port, 					.default_int = 9009 },
+	{ .var_type = DATUM_CONF_INT, 		.category = "questdb", 		.name = "batch_size",					.description = "Number of metrics to batch before sending",
+		.required = false, .ptr = &datum_config.questdb.batch_size, 				.default_int = 100 },
+	{ .var_type = DATUM_CONF_INT, 		.category = "questdb", 		.name = "flush_interval_ms",			.description = "Interval in milliseconds to flush metrics",
+		.required = false, .ptr = &datum_config.questdb.flush_interval_ms, 		.default_int = 5000 },
+	
+	// Metrics collector configuration
+	{ .var_type = DATUM_CONF_BOOL, 		.category = "metrics_collector", .name = "enabled",					.description = "Enable mining metrics collection",
+		.required = false, .ptr = &datum_config.metrics_collector.enabled, 		.default_bool = false },
+	{ .var_type = DATUM_CONF_INT, 		.category = "metrics_collector", .name = "collection_interval_sec",	.description = "Interval in seconds between metrics collections",
+		.required = false, .ptr = &datum_config.metrics_collector.collection_interval_sec, .default_int = 30 },
+	{ .var_type = DATUM_CONF_INT, 		.category = "metrics_collector", .name = "hashrate_window_sec",		.description = "Rolling window in seconds for hashrate calculations",
+		.required = false, .ptr = &datum_config.metrics_collector.hashrate_window_sec, .default_int = 300 },
 };
 
 #define NUM_CONFIG_ITEMS (sizeof(datum_config_options) / sizeof(datum_config_options[0]))

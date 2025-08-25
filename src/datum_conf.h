@@ -45,6 +45,15 @@
 
 #include <jansson.h>
 
+#include "datum_questdb.h"
+
+// Metrics collector configuration
+typedef struct {
+	bool enabled;
+	uint32_t collection_interval_sec;
+	uint32_t hashrate_window_sec;
+} T_DATUM_METRICS_COLLECTOR_CONFIG;
+
 enum datum_conf_vartype {
 	// NOTE: Keep in sync with datum_conf_var_type_text
 	DATUM_CONF_BOOL,
@@ -69,9 +78,9 @@ typedef struct {
 			const char *default_string[DATUM_CONFIG_MAX_ARRAY_ENTRIES];
 		};
 	};
-	
+
 	void *ptr;
-	
+
 	bool required;
 } T_DATUM_CONFIG_ITEM;
 
@@ -104,14 +113,14 @@ typedef struct {
 	char bitcoind_rpcurl[256];
 	int bitcoind_work_update_seconds;
 	bool bitcoind_notify_fallback;
-	
+
 	char stratum_v1_listen_addr[128];
 	int stratum_v1_listen_port;
 	int stratum_v1_max_clients;
 	int stratum_v1_max_threads;
 	int stratum_v1_max_clients_per_thread;
 	int stratum_v1_trust_proxy;
-	
+
 	int stratum_v1_vardiff_min;
 	int stratum_v1_vardiff_target_shares_min;
 	int stratum_v1_vardiff_quickdiff_count;
@@ -121,15 +130,15 @@ typedef struct {
 	int stratum_v1_idle_timeout_no_subscribe;
 	int stratum_v1_idle_timeout_no_share;
 	int stratum_v1_idle_timeout_max_last_work;
-	
+
 	void *stratum_username_mod;
-	
+
 	char mining_pool_address[256];
 	char mining_coinbase_tag_primary[64];
 	char mining_coinbase_tag_secondary[64];
 	char mining_save_submitblocks_dir[256];
 	int coinbase_unique_id;
-	
+
 	char api_admin_password[72];
 	size_t api_admin_password_len;
 	char api_csrf_token[65];
@@ -137,10 +146,10 @@ typedef struct {
 	int api_listen_port;
 	bool api_modify_conf;
 	json_t *config_json;
-	
+
 	int extra_block_submissions_count;
 	char extra_block_submissions_urls[DATUM_MAX_BLOCK_SUBMITS][DATUM_MAX_SUBMIT_URL_LEN];
-	
+
 	bool clog_to_file;
 	bool clog_to_console;
 	int clog_level_console;
@@ -149,7 +158,7 @@ typedef struct {
 	bool clog_to_stderr;
 	bool clog_rotate_daily;
 	char clog_file[1024];
-	
+
 	char datum_pool_host[1024];
 	int datum_pool_port;
 	bool datum_pool_pass_workers;
@@ -159,12 +168,18 @@ typedef struct {
 	char datum_pool_pubkey[1024];
 	int datum_protocol_global_timeout;
 	uint64_t datum_protocol_global_timeout_ms;
-	
+
 	uint32_t prime_id;
 	unsigned char override_mining_pool_scriptsig[256];
 	int override_mining_pool_scriptsig_len;
 	char override_mining_coinbase_tag_primary[256];
 	uint64_t override_vardiff_min;
+
+	// QuestDB integration configuration
+	T_DATUM_QUESTDB_CONFIG questdb;
+
+	// Metrics collector configuration
+	T_DATUM_METRICS_COLLECTOR_CONFIG metrics_collector;
 } global_config_t;
 
 extern global_config_t datum_config;
