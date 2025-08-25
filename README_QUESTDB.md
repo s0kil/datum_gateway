@@ -69,39 +69,14 @@ cmake . && make
 
 ### `ocean_datum_shares` - Individual Share Submissions
 
-| Column           | Type      | Description           |
-| ---------------- | --------- | --------------------- |
-| timestamp        | timestamp | Submission time       |
-| worker           | symbol    | Worker/miner ID       |
-| ip               | symbol    | Machine IP address    |
-| status           | symbol    | accepted/rejected     |
-| difficulty       | long      | Share difficulty      |
-| reason           | symbol    | Rejection reason      |
-| response_time_ms | long      | Response time (ms)    |
-| connection_id    | symbol    | Connection identifier |
-
-### `ocean_datum_connections` - Connection Events
-
-| Column              | Type      | Description                |
-| ------------------- | --------- | -------------------------- |
-| timestamp           | timestamp | Event time                 |
-| worker              | symbol    | Worker/miner ID            |
-| ip                  | symbol    | Machine IP address         |
-| event_type          | symbol    | connect/disconnect/timeout |
-| connection_duration | long      | Duration in seconds        |
-| disconnect_reason   | symbol    | Reason for disconnection   |
-
-### `ocean_datum_pool_stats` - Pool-wide Statistics
-
-| Column             | Type      | Description                  |
-| ------------------ | --------- | ---------------------------- |
-| timestamp          | timestamp | Measurement time             |
-| total_hashrate_th  | double    | Total pool hashrate (TH/s)   |
-| active_workers     | long      | Number of active workers     |
-| active_connections | long      | Number of active connections |
-| total_shares_1min  | long      | Shares in last minute        |
-| avg_difficulty     | double    | Average share difficulty     |
-| pool_efficiency    | double    | Pool-wide efficiency         |
+| Column     | Type      | Description                    |
+| ---------- | --------- | ------------------------------ |
+| timestamp  | timestamp | Submission time                |
+| worker     | symbol    | Worker/miner ID                |
+| ip         | symbol    | Machine IP address             |
+| status     | symbol    | accepted/rejected              |
+| difficulty | long      | Share difficulty               |
+| reason     | symbol    | Rejection reason (if rejected) |
 
 ## Example Queries
 

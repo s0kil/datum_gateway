@@ -21,11 +21,12 @@ SELECT
     timestamp,
     worker,
     ip,
-    reported_th,
+    user_agent,
     calculated_th,
-    efficiency,
     shares_accepted,
-    shares_rejected
+    shares_rejected,
+    current_diff,
+    uptime_seconds
 FROM ocean_datum_hashrate
 WHERE timestamp > dateadd('h', -1, now())
 ORDER BY timestamp DESC
@@ -49,10 +50,9 @@ SELECT
     worker,
     count() as data_points,
     avg(calculated_th) as avg_hashrate_th,
-    avg(reported_th) as avg_reported_th,
-    avg(efficiency) as avg_efficiency,
     sum(shares_accepted) as total_accepted,
     sum(shares_rejected) as total_rejected,
+    avg(current_diff) as avg_difficulty,
     max(timestamp) as last_seen
 FROM ocean_datum_hashrate
 WHERE timestamp > dateadd('d', -1, now())
@@ -63,23 +63,25 @@ ORDER BY avg_hashrate_th DESC;
 SELECT 
     count(DISTINCT worker) as active_workers,
     sum(calculated_th) as total_hashrate_th,
-    avg(efficiency) as pool_avg_efficiency
+    avg(calculated_th) as avg_worker_hashrate_th,
+    sum(shares_accepted + shares_rejected) as total_shares
 FROM ocean_datum_hashrate
 WHERE timestamp > dateadd('m', -5, now());
 
--- Identify workers with efficiency issues
+-- Identify workers with low hashrate
 SELECT 
     worker,
-    avg(efficiency) as avg_efficiency,
     avg(calculated_th) as avg_calculated_th,
-    avg(reported_th) as avg_reported_th,
-    count() as samples
+    avg(shares_per_min) as avg_shares_per_min,
+    avg(current_diff) as avg_difficulty,
+    count() as samples,
+    max(uptime_seconds) / 3600 as max_uptime_hours
 FROM ocean_datum_hashrate
 WHERE timestamp > dateadd('h', -1, now())
-    AND reported_th > 0
+    AND calculated_th > 0
 GROUP BY worker
-HAVING avg(efficiency) < 0.9  -- Less than 90% efficiency
-ORDER BY avg_efficiency ASC;
+HAVING avg(calculated_th) < 1.0  -- Less than 1 TH/s
+ORDER BY avg_calculated_th ASC;
 
 -- Share rejection analysis
 SELECT 
