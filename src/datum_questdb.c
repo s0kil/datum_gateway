@@ -596,7 +596,7 @@ static bool reconnect_questdb(void) {
     }
     
     // Recreate buffer
-    g_questdb_state->buffer = line_sender_buffer_with_max_name_len(128);
+    g_questdb_state->buffer = line_sender_buffer_new_for_sender(g_questdb_state->sender);
     if (!g_questdb_state->buffer) {
         DLOG_ERROR("Failed to recreate QuestDB buffer during reconnection");
         line_sender_close(g_questdb_state->sender);
