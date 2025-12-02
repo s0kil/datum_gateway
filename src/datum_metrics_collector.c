@@ -400,20 +400,34 @@ void datum_metrics_collect_metrics(void) {
     clock_gettime(CLOCK_REALTIME, &ts);
     uint64_t timestamp_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
 
-    // Check if QuestDB is healthy before collecting
-    if (!datum_questdb_is_healthy()) {
-        static uint32_t unhealthy_count = 0;
+    // Check if QuestDB is initialized and healthy
+    bool questdb_healthy = datum_questdb_is_healthy();
+    static uint32_t unhealthy_count = 0;
+    static uint32_t healthy_collections = 0;
+    static bool was_healthy = false;
+
+    if (!questdb_healthy) {
         unhealthy_count++;
-        DLOG_WARN("QuestDB unhealthy (count: %u), skipping metrics collection - check connection to QuestDB", unhealthy_count);
+        // Log less frequently to reduce spam - every 60 seconds (assuming 30s collection interval)
+        if (unhealthy_count == 1 || (unhealthy_count % 2 == 0)) {
+            DLOG_WARN("QuestDB unhealthy (count: %u), metrics will be collected when connection is restored",
+                     unhealthy_count);
+        }
+        // Still calculate hashrates locally even if we can't send to QuestDB
+        // This keeps worker stats up to date for when connection is restored
         pthread_mutex_unlock(&g_collector->mutex);
         return;
     }
 
-    // Log successful connection periodically
-    static uint32_t healthy_collections = 0;
+    // Log recovery or periodic healthy status
+    if (!was_healthy) {
+        DLOG_INFO("QuestDB connection restored - resuming metrics collection");
+        unhealthy_count = 0;
+    }
+    was_healthy = true;
     healthy_collections++;
-    if (healthy_collections == 1 || (healthy_collections % 10 == 0)) {
-        DLOG_INFO("QuestDB healthy - collecting metrics (collection #%u)", healthy_collections);
+    if (healthy_collections % 20 == 0) {
+        DLOG_DEBUG("QuestDB healthy - metrics collection #%u", healthy_collections);
     }
 
     // Collect and send metrics for each worker

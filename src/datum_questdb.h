@@ -105,4 +105,7 @@ void datum_questdb_get_stats(
 // Check if QuestDB connection is healthy
 bool datum_questdb_is_healthy(void);
 
+// Check if QuestDB is initialized (state exists, even if currently unhealthy)
+bool datum_questdb_is_initialized(void);
+
 #endif /* _DATUM_QUESTDB_H_ */
