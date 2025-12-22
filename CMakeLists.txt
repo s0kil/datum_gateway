@@ -1,6 +1,6 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.15.0)
 
-project(DATUM VERSION 0.4.1 LANGUAGES C)
+project(DATUM VERSION 0.4.1 LANGUAGES C CXX)
 
 # Enable C23 if supported, else fall back to C11 for compatibility
 if(CMAKE_VERSION VERSION_LESS "3.21")
@@ -13,7 +13,22 @@ else()
     set(CMAKE_C_STANDARD_REQUIRED OFF)
 endif()
 
+# Set C++17 standard for QuestDB client
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 option(ENABLE_API "Build API support." ON)
+
+# Fetch QuestDB C client library
+include(FetchContent)
+
+FetchContent_Declare(
+    c_questdb_client_proj
+    GIT_REPOSITORY https://github.com/questdb/c-questdb-client.git
+    GIT_TAG 5.0.0)
+
+FetchContent_MakeAvailable(c_questdb_client_proj)
 
 include(GNUInstallDirs)
 
@@ -23,9 +38,11 @@ add_executable(datum_gateway
 	src/datum_conf.c
 	src/datum_conf_tests.c
 	src/datum_gateway.c
+	src/datum_metrics_collector.c
 	src/datum_jsonrpc.c
 	src/datum_logger.c
 	src/datum_protocol.c
+	src/datum_questdb.c
 	src/datum_queue.c
 	src/datum_sockets.c
 	src/datum_stratum.c
@@ -140,6 +157,7 @@ target_link_libraries(datum_gateway
 	${CURL_LIBRARIES} ${CURL_LDFLAGS} ${CURL_LDFLAGS_OTHER}
 	${JANSSON_LIBRARIES} ${JANSSON_LDFLAGS} ${JANSSON_LDFLAGS_OTHER}
 	${SODIUM_LIBRARIES} ${SODIUM_LDFLAGS} ${SODIUM_LDFLAGS_OTHER}
+	questdb_client
 )
 target_compile_options(datum_gateway
 	PUBLIC
@@ -168,7 +186,7 @@ install(FILES ${PREGEN_DOC} DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
 if(NOT CMAKE_CROSSCOMPILING)
 	set(GENERATED_DOC ${CMAKE_BINARY_DIR}/CMakeFiles/generated_example_datum_gateway_config.json)
-	
+
 	add_custom_command(
 		TARGET datum_gateway
 		POST_BUILD

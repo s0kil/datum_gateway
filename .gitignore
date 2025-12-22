@@ -14,3 +14,9 @@ datum_gateway
 *.orig
 *.rej
 *~
+
+# Quest DB Client
+_deps
+cargo
+corrosion
+*.cmake
